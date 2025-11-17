@@ -1,0 +1,9 @@
+|              Process |LookAhead |Symbol |  Stack |
++----------------------+----------+-------+--------+
+|    Action(0, b) = S3 |        0 |     b |      0 |
+|    Action(3, a) = S4 |        1 |     a |  0 b 3 |
+|    Action(3, A) = r3 |        2 |     b |0 b 3 A |
+|    Action(0, A) = r2 |        2 |     b |    0 A |
+|    Action(2, b) = S5 |        2 |     b |  0 A 2 |
+|    Action(0, S) = r1 |        3 |     $ |    0 S |
+|Action(1, $) = Accept |        3 |     $ |  0 S 1 |
