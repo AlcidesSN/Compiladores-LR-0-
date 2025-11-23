@@ -1,6 +1,4 @@
 S->Ab
 S->Ba
-A->bA
-A->a
-B->Ba
-B->c
+B->a
+A->b

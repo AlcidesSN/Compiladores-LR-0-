@@ -8,117 +8,144 @@
 #include <set>
 #include <algorithm>
 #include <filesystem>
-#include <iomanip>
-#include <cctype>
+
 
 using namespace std;
 
-/* (same LR(0) implementation as before, but interactive reads use getline-based helpers) */
+/* 
+A função 'insert_dot' é responsável por alterar a posição do "." indica o primeiro termo e é executada apenas uma vez.
+*/
+string insert_dot(const string& production) {
 
-struct Production {
-    string lhs;
-    vector<string> rhs;
-    string to_string() const {
-        string s = lhs + "->";
-        for (size_t i = 0; i < rhs.size(); ++i) {
-            if (i) s += " ";
-            s += rhs[i];
-        }
-        return s;
-    }
-};
+    if (production.find('.') != string::npos) return production;
 
-struct Item {
-    int prod;
-    int dot;
-    bool operator<(Item const& o) const {
-        if (prod != o.prod) return prod < o.prod;
-        return dot < o.dot;
-    }
-    bool operator==(Item const& o) const {
-        return prod == o.prod && dot == o.dot;
-    }
-};
-
-static string trim(const string& s) {
-    size_t a = s.find_first_not_of(" \t\r\n");
-    if (a == string::npos) return "";
-    size_t b = s.find_last_not_of(" \t\r\n");
-    return s.substr(a, b - a + 1);
+    string s = production;
+    size_t pos = s.find("->");
+    if (pos != string::npos) s.replace(pos, 2, "->.");
+    return s;
 }
 
-static vector<string> split_ws(const string& s) {
-    vector<string> out;
-    string token;
-    stringstream ss(s);
-    while (ss >> token) out.push_back(token);
-    return out;
-}
+/* 
+A função 'vector_key' pega cada string do vetor e vai colando tudo em uma única string só, separando 
+cada elemento com o marcador |#|. Se for o primeiro elemento, ela coloca direto; a partir do segundo, ela 
+coloca |#| antes. 
+*/
 
-static vector<string> tokenize_rhs(const string& rhs) {
-    string t = trim(rhs);
-    if (t.empty()) return {};
-    if (t.find_first_of(" \t") != string::npos) {
-        return split_ws(t);
-    } else {
-        vector<string> out;
-        for (char c : t) {
-            if (isspace((unsigned char)c)) continue;
-            out.emplace_back(1, c);
-        }
-        return out;
-    }
-}
-
-string vector_key_items(const vector<Item>& v) {
-    vector<Item> tmp = v;
-    sort(tmp.begin(), tmp.end());
+string vector_key(const vector<string>& v) {
     string out;
-    for (size_t i = 0; i < tmp.size(); ++i) {
-        if (i) out += "|";
-        out += to_string(tmp[i].prod) + ":" + to_string(tmp[i].dot);
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (i) out += "|#|";
+        out += v[i];
     }
     return out;
 }
 
-vector<Item> closure_items(const vector<Item>& items, const vector<Production>& prods, const unordered_map<string, vector<int>>& lhs_to_prods) {
-    vector<Item> res = items;
-    set<pair<int,int>> seen;
-    for (const Item &it: res) seen.insert({it.prod, it.dot});
-    for (size_t idx = 0; idx < res.size(); ++idx) {
-        Item cur = res[idx];
-        const Production& P = prods[cur.prod];
-        if (cur.dot < (int)P.rhs.size()) {
-            string B = P.rhs[cur.dot];
-            if (lhs_to_prods.count(B)) {
-                for (int pidx : lhs_to_prods.at(B)) {
-                    pair<int,int> key = {pidx, 0};
-                    if (!seen.count(key)) {
-                        seen.insert(key);
-                        res.push_back(Item{pidx, 0});
+/* A função 'closure' basicamente pega um item LR(0) e sai adicionando ao conjunto todas as produções 
+que precisam aparecer quando, logo depois do ponto '.', aparece um nao-terminal. Ela começa colocando 
+o item inicial no vetor e vai analisando cada um deles. Quando encontra o '.', olha o símbolo que 
+vem depois, se for o mesmo símbolo que inicia alguma produção, ela cria uma nova versão dessa produção 
+com o '.' no começo e adiciona ao conjunto, sem repetir itens. Esse processo continua até não aparecer 
+mais nada novo*/
+
+vector<string> closure(const string& item, const vector<string>& productions) {
+    vector<string> result;
+    result.push_back(item);
+    for (size_t idx = 0; idx < result.size(); ++idx) {
+        string current = result[idx];
+        size_t dotPos = current.find('.');
+        if (dotPos != string::npos && dotPos + 1 < current.size()) {
+            char nextSymbol = current[dotPos + 1];
+            for (const string& prod : productions) {
+                if (!prod.empty() && prod[0] == nextSymbol) {
+                    string withDot = insert_dot(prod);
+                    if (find(result.begin(), result.end(), withDot) == result.end()) {
+                        result.push_back(withDot);
                     }
                 }
             }
         }
     }
-    return res;
+    return result;
+}
+/*
+A função 'swap_position' É projetada para alterar a posição do ponto "." em uma string.
+Representação de um item gramatical (e.g., "S -> .aB" vira "S -> a.B" após a troca).
+*/
+string swap_positions(const string& sequence, size_t position) {
+    if (position + 1 >= sequence.size()) return sequence;
+    string s = sequence;
+    swap(s[position], s[position + 1]);
+    return s;
 }
 
-vector<Item> goto_items(const vector<Item>& items, const string& symbol, const vector<Production>& prods, const unordered_map<string, vector<int>>& lhs_to_prods) {
-    vector<Item> moved;
-    for (const Item& it : items) {
-        const Production& P = prods[it.prod];
-        if (it.dot < (int)P.rhs.size() && P.rhs[it.dot] == symbol) {
-            moved.push_back(Item{it.prod, it.dot + 1});
+vector<string> goto_state(const string& item, const vector<string>& productions) {
+    size_t dotIndex = item.find('.');
+    if (dotIndex == string::npos) return { item };
+    if (dotIndex == item.size() - 1) return { item };
+    string moved = swap_positions(item, dotIndex);
+    if (moved.find('.') != string::npos && moved.find('.') != moved.size() - 1) {
+        return closure(moved, productions);
+    }
+    return { moved };
+}
+
+/* 
+Aqui é feita a separação de todos os estados terminais, armazenando cada um em uma lista.
+Para cada produção, encontra o "->" e isola o que ele produz, depois disso,
+percorre cada um dos caracteres, ignorando certos caracteres (como "." e " ") e se
+não for uma letra maiúscula, o caractere é adicionado ao "set<char>", e adiciona um "$"
+para usá-lo como um "marcador de fim de produção".
+Ao final, a lista de caracteres é retornada a um vetor para que possa ser classificada na próxima etapa.
+*/
+set<char> get_terminals(const vector<string>& productions) {
+    set<char> terms;
+    for (const string& p : productions) {
+        size_t pos = p.find("->");
+        if (pos == string::npos) continue;
+        string right = p.substr(pos + 2);
+        for (char c : right) {
+            if (c == '.' || c == ' ' || c == '\t') continue;
+            if (!(c >= 'A' && c <= 'Z')) terms.insert(c);
         }
     }
-    if (moved.empty()) return {};
-    return closure_items(moved, prods, lhs_to_prods);
+    terms.insert('$');
+    return terms;
+}
+
+/*
+Aqui, na funçao 'get_non_terminals', cada regra de produção é processada da mesma forma que é feito com `get_terminals`, exceto que, agora, cada
+caractere que é uma letra maiúscula (A-Z) é considerado um não terminal e é adicionado ao "set<char>".
+O conjunto é retornado sem marcadores adicionais ($), pois eles não indicam um 'fim', mas sim uma continuação.
+Ao final, a lista de caracteres é retornada para um vetor para que possa ser ordenada na próxima etapa.
+*/
+set<char> get_non_terminals(const vector<string>& productions) {
+    set<char> nonterms;
+    for (const string& p : productions) {
+        size_t pos = p.find("->");
+        if (pos == string::npos) continue;
+        string right = p.substr(pos + 2);
+        for (char c : right) {
+            if (c >= 'A' && c <= 'Z') nonterms.insert(c);
+        }
+    }
+    return nonterms;
+}
+
+vector<pair<string, vector<string>>> filter_by_state(const unordered_map<string, vector<string>>& graph, int state) {
+    vector<pair<string, vector<string>>> out;
+    for (const auto& kv : graph) {
+        const string& key = kv.first;
+        stringstream ss(key);
+        int s;
+        ss >> s;
+        if (s == state) out.push_back(kv);
+    }
+    return out;
 }
 
 string compress_name(const string& name) {
     unordered_map<char, int> freq;
-    for (char c : name) if (!isspace((unsigned char)c)) freq[c]++;
+    for (char c : name) freq[c]++;
     string out;
     for (const auto& kv : freq) {
         out.push_back(kv.first);
@@ -144,6 +171,14 @@ string join_stack(const vector<string>& st) {
     return s;
 }
 
+/*
+essa primeira parte ela vai receber uma tabela, que no caso acho que é a vector<vector<string>> table,
+ela recebe também um cabeçalho que é o header e depois ele vai contruir um tipo de representação de tabela, 
+dai no final retorna essa tabela como string usando stringstream ss; e return ss.str();. 
+Basicamente uma construção de uma tabela onde a função vector<vector<string>> table e vector<string> 
+header criam essa tabela e usam | e +/- para ficar alinhando as colunas para a direita, 
+e por fim retorna tudo como string usando as funções: stringstream ss; e return ss.str()
+*/
 string table_to_string(const vector<vector<string>>& table, const vector<string>& header) {
     vector<size_t> widths;
     size_t cols = header.size();
@@ -155,10 +190,12 @@ string table_to_string(const vector<vector<string>>& table, const vector<string>
         }
     }
     stringstream ss;
+    // header
     for (size_t j = 0; j < cols; ++j) {
         ss << "|" << string(widths[j] - header[j].size(), ' ') << header[j] << " ";
     }
     ss << "|\n";
+    // separator
     for (size_t j = 0; j < cols; ++j) {
         ss << "+" << string(widths[j] + 1, '-');
     }
@@ -173,53 +210,22 @@ string table_to_string(const vector<vector<string>>& table, const vector<string>
     return ss.str();
 }
 
-/* --- New: safe prompting helpers --- */
-
-// Prompt the user with 'prompt', flush stdout, then read a whole line (blocking).
-static string prompt_line(const string& prompt) {
-    cout << prompt;
-    cout.flush();
-    string line;
-    if (!std::getline(cin, line)) {
-        // If getline fails (EOF), return empty string
-        return string();
-    }
-    return line;
-}
-
-// Prompt for an integer (grammar id). Keeps prompting until a valid integer is entered.
-// Returns -1 on EOF.
-static int prompt_int(const string& prompt) {
-    while (true) {
-        string line = prompt_line(prompt);
-        if (line.empty()) {
-            // If empty line, ask again (but allow EOF to return -1)
-            if (cin.eof()) return -1;
-            // continue to reprompt
-            continue;
-        }
-        // try parse int
-        stringstream ss(line);
-        int v;
-        if (ss >> v) return v;
-        // invalid, reprompt
-        cout << "Invalid number, try again.\n";
-    }
-}
-
-/* --- main --- */
 
 int main() {
-    ios::sync_with_stdio(false);
-    cin.tie(nullptr);
+    cout << "LR (0) Parsing\n\n";
 
-    cout << "LR(0) Parser Generator & Parser\n\n";
+    vector<string> productions;
+    vector<vector<string>> item_sets;
+    vector<vector<string>> completed_sets;
 
-    int grammar_id = prompt_int("Enter grammar number: ");
-    if (grammar_id < 0) {
-        cerr << "No grammar number provided. Exiting.\n";
-        return 1;
-    }
+/*
+Nessa função, é pedido para o usuário informar o id para que a função possa chamar o grammar/<id>.txt correspondente. 
+E depois, lê linha a linha cada produção não-vazia para o vetor productions (falha com cerr e return 1 se o arquivo não abrir); 
+Em seguida insere no índice zero a produção aumentada "S'->.S" — necessária para o ponto de partida do LR(0) — e constrói um unordered_map<string,int
+*/
+    int grammar_id;
+    cout << "Enter grammar number: ";
+    cin >> grammar_id;
     cout << "\n";
 
     string grammar_path = "grammar/" + to_string(grammar_id) + ".txt";
@@ -228,254 +234,243 @@ int main() {
         cerr << "Cannot open grammar file: " << grammar_path << endl;
         return 1;
     }
-
-    vector<string> raw_lines;
     string line;
     while (getline(gfile, line)) {
-        line = trim(line);
-        if (!line.empty()) raw_lines.push_back(line);
+        if (!line.empty()) {
+            productions.push_back(line);
+        }
     }
     gfile.close();
 
-    if (raw_lines.empty()) {
-        cerr << "Grammar file is empty\n";
-        return 1;
+    productions.insert(productions.begin(), "S'->.S");
+
+    unordered_map<string, int> production_numbers;
+    for (size_t i = 1; i < productions.size(); ++i) {
+        production_numbers[productions[i]] = static_cast<int>(i);
     }
 
-    vector<Production> prods;
-    for (const string& l : raw_lines) {
-        size_t pos = l.find("->");
-        if (pos == string::npos) {
-            cerr << "Skipping invalid line (no ->): " << l << "\n";
-            continue;
-        }
-        string lhs = trim(l.substr(0, pos));
-        string rhs_str = trim(l.substr(pos + 2));
-        vector<string> rhs_tokens = tokenize_rhs(rhs_str);
-        Production P;
-        P.lhs = lhs;
-        P.rhs = rhs_tokens;
-        prods.push_back(P);
-    }
+    vector<string> initial = closure(string("S'->.S"), productions);
+    item_sets.push_back(initial);
 
-    string start_symbol = prods.front().lhs;
-    Production aug;
-    aug.lhs = "S'";
-    aug.rhs = { start_symbol };
-    prods.insert(prods.begin(), aug);
+    unordered_map<string, int> state_ids;
+    unordered_map<string, vector<string>> dfa_transitions;
+    int current_state_id = 0;
 
-    unordered_map<string, vector<int>> lhs_to_prods;
-    for (size_t i = 0; i < prods.size(); ++i) lhs_to_prods[prods[i].lhs].push_back((int)i);
+    while (!item_sets.empty()) {
+        vector<string> current_items = item_sets.front();
+        item_sets.erase(item_sets.begin());
+        completed_sets.push_back(current_items);
+        string keyCurrent = vector_key(current_items);
+        state_ids[keyCurrent] = current_state_id;
+        current_state_id++;
 
-    set<string> nonterms_set;
-    for (const auto& p : prods) nonterms_set.insert(p.lhs);
-    set<string> terms_set;
-    for (const auto& p : prods) {
-        for (const string& tok : p.rhs) {
-            if (!nonterms_set.count(tok)) terms_set.insert(tok);
-        }
-    }
-    terms_set.insert("$");
-    vector<string> nonterms(nonterms_set.begin(), nonterms_set.end());
-    vector<string> terminals(terms_set.begin(), terms_set.end());
-
-    vector<vector<Item>> states;
-    unordered_map<string,int> state_id_by_key;
-    map<int, map<string,int>> transitions;
-
-    vector<Item> start_items = closure_items({ Item{0,0} }, prods, lhs_to_prods);
-    states.push_back(start_items);
-    state_id_by_key[vector_key_items(start_items)] = 0;
-
-    for (size_t si = 0; si < states.size(); ++si) {
-        set<string> symbols;
-        for (const Item& it : states[si]) {
-            const Production& P = prods[it.prod];
-            if (it.dot < (int)P.rhs.size()) {
-                symbols.insert(P.rhs[it.dot]);
+        for (const string& it : current_items) {
+            vector<string> next_items = goto_state(it, productions);
+            if (find(item_sets.begin(), item_sets.end(), next_items) == item_sets.end() && find(completed_sets.begin(), completed_sets.end(), next_items) == completed_sets.end()) {
+                if (next_items != current_items) item_sets.push_back(next_items);
             }
-        }
-        for (const string& sym : symbols) {
-            vector<Item> gotoSet = goto_items(states[si], sym, prods, lhs_to_prods);
-            if (gotoSet.empty()) continue;
-            string key = vector_key_items(gotoSet);
-            int nid;
-            if (!state_id_by_key.count(key)) {
-                nid = (int)states.size();
-                states.push_back(gotoSet);
-                state_id_by_key[key] = nid;
-            } else {
-                nid = state_id_by_key[key];
-            }
-            transitions[(int)si][sym] = nid;
+            string mapKey = to_string(state_ids[keyCurrent]) + " " + it;
+            dfa_transitions[mapKey] = next_items;
         }
     }
 
-    cout << "---------------------------------------------------------------\n";
-    cout << "Total States: " << states.size() << "\n";
-    for (size_t i = 0; i < states.size(); ++i) {
-        cout << i << " : [";
-        for (size_t j = 0; j < states[i].size(); ++j) {
-            if (j) cout << ", ";
-            const Item& it = states[i][j];
-            const Production& P = prods[it.prod];
-            cout << P.lhs << "->";
-            for (size_t k = 0; k < P.rhs.size(); ++k) {
-                if ((int)k == it.dot) cout << ".";
-                if (k) cout << " ";
-                cout << P.rhs[k];
-            }
-            if (it.dot == (int)P.rhs.size()) cout << ".";
-        }
-        cout << "]\n";
-    }
-    cout << "---------------------------------------------------------------\n";
-
-    map<int, map<string, string>> ACTION;
-    map<int, map<string, int>> GOTO;
-
-    for (const auto& stkv : transitions) {
-        int s = stkv.first;
-        for (const auto& symkv : stkv.second) {
-            const string& sym = symkv.first;
-            int tgt = symkv.second;
-            if (nonterms_set.count(sym)) {
-                GOTO[s][sym] = tgt;
-            } else {
-                ACTION[s][sym] = "S" + to_string(tgt);
-            }
-        }
-    }
-
-    for (size_t s = 0; s < states.size(); ++s) {
-        for (const Item& it : states[s]) {
-            const Production& P = prods[it.prod];
-            if (it.dot == (int)P.rhs.size()) {
-                if (it.prod == 0) {
-                    ACTION[(int)s]["$"] = "Accept";
-                } else {
-                    string action = "r" + to_string((int)it.prod);
-                    for (const string& t : terminals) {
-                        if (ACTION[(int)s].count(t)) {
-                            string existing = ACTION[(int)s][t];
-                            if (existing != action) {
-                                cerr << "Conflict at state " << s << " on symbol '" << t << "': existing='" << existing << "' new='" << action << "'\n";
-                            }
-                        } else {
-                            ACTION[(int)s][t] = action;
-                        }
-                    }
+    for (size_t i = 0; i < completed_sets.size(); ++i) {
+        for (size_t j = 0; j < completed_sets[i].size(); ++j) {
+            vector<string> g = goto_state(completed_sets[i][j], productions);
+            if (find(completed_sets.begin(), completed_sets.end(), g) == completed_sets.end()) {
+                if (completed_sets[i][j].find('.') != string::npos && completed_sets[i][j].find('.') != completed_sets[i][j].size() - 1) {
+                    completed_sets.push_back(g);
                 }
             }
         }
     }
 
-    vector<string> header;
-    header.push_back("State");
-    for (const string& t : terminals) header.push_back(t);
-    for (const string& nt : nonterms) header.push_back(nt);
+    cout << "---------------------------------------------------------------\n";
+    cout << "Total States: " << completed_sets.size() << "\n";
+    for (size_t i = 0; i < completed_sets.size(); ++i) {
+        cout << i << " : [";
+        for (size_t j = 0; j < completed_sets[i].size(); ++j) {
+            if (j) cout << ", ";
+            cout << completed_sets[i][j];
+        }
+        cout << "]\n";
+    }
+    cout << "---------------------------------------------------------------\n";
+
+    map<int, map<char, int>> dfa;
+    for (size_t i = 0; i < completed_sets.size(); ++i) {
+        auto trans = filter_by_state(dfa_transitions, static_cast<int>(i));
+        map<char, int> symbol_to_state;
+        for (const auto& kv : trans) {
+            string key = kv.first;
+            string item = key.substr(key.find(' ') + 1);
+            size_t arrow = item.find("->");
+            if (arrow == string::npos) continue;
+            string right = item.substr(arrow + 2);
+            size_t dot = right.find('.');
+            if (dot == string::npos || dot + 1 >= right.size()) continue;
+            char nextSymbol = right[dot + 1];
+            string nextItemsKey = vector_key(kv.second);
+            if (state_ids.find(nextItemsKey) != state_ids.end()) {
+                symbol_to_state[nextSymbol] = state_ids[nextItemsKey];
+            }
+        }
+        if (!symbol_to_state.empty()) {
+            dfa[static_cast<int>(i)] = symbol_to_state;
+        }
+    }
+
+    set<char> terminals_set = get_terminals(productions);
+    set<char> nonterm_set = get_non_terminals(productions);
+    vector<char> terminals(terminals_set.begin(), terminals_set.end());
+    vector<char> nonterms(nonterm_set.begin(), nonterm_set.end());
+    sort(terminals.begin(), terminals.end());
+    sort(nonterms.begin(), nonterms.end());
 
     vector<vector<string>> table_rows;
-    for (size_t s = 0; s < states.size(); ++s) {
+    vector<string> header;
+    header.push_back("");
+    for (char t : terminals) header.push_back(string(1, t));
+    for (char nt : nonterms) header.push_back(string(1, nt));
+
+    unordered_map<int, unordered_map<char, string>> parsing_table_dict;
+
+    for (size_t i = 0; i < completed_sets.size(); ++i) {
         vector<string> row;
-        row.push_back(to_string((int)s));
+        row.push_back(to_string(static_cast<int>(i)));
         row.resize(1 + terminals.size() + nonterms.size(), "");
-        for (size_t ti = 0; ti < terminals.size(); ++ti) {
-            const string& t = terminals[ti];
-            if (ACTION.count((int)s) && ACTION[(int)s].count(t)) row[1 + ti] = ACTION[(int)s][t];
+        unordered_map<char, string> actions;
+
+        if (dfa.find(static_cast<int>(i)) != dfa.end()) {
+            for (const auto& kv : dfa[static_cast<int>(i)]) {
+                char sym = kv.first;
+                int st = kv.second;
+                if (sym >= 'A' && sym <= 'Z') {
+                    size_t idx = 1 + terminals.size() + (find(nonterms.begin(), nonterms.end(), sym) - nonterms.begin());
+                    if (idx < row.size()) row[idx] = to_string(st);
+                    actions[sym] = to_string(st);
+                } else {
+                    size_t idx = 1 + (find(terminals.begin(), terminals.end(), sym) - terminals.begin());
+                    if (idx < row.size()) row[idx] = "S" + to_string(st);
+                    actions[sym] = "S" + to_string(st);
+                }
+            }
         }
-        for (size_t nti = 0; nti < nonterms.size(); ++nti) {
-            const string& nt = nonterms[nti];
-            size_t idx = 1 + terminals.size() + nti;
-            if (GOTO.count((int)s) && GOTO[(int)s].count(nt)) row[idx] = to_string(GOTO[(int)s][nt]);
+
+        for (const string& it : completed_sets[i]) {
+            size_t dotPos = it.find('.');
+            if (dotPos != string::npos && dotPos == it.size() - 1) {
+                string prodNoDot = it;
+                prodNoDot.erase(prodNoDot.find('.'), 1);
+                if (prodNoDot == "S'->S") {
+                    actions['$'] = "Accept";
+                    size_t idx = 1 + (find(terminals.begin(), terminals.end(), '$') - terminals.begin());
+                    if (idx < row.size()) row[idx] = "Accept";
+                } else {
+                    auto itnum = production_numbers.find(prodNoDot);
+                    if (itnum != production_numbers.end()) {
+                        int prodIndex = itnum->second;
+                        for (size_t k = 0; k < terminals.size(); ++k) {
+                            row[1 + k] = "r" + to_string(prodIndex);
+                            actions[terminals[k]] = "r" + to_string(prodIndex);
+                        }
+                    }
+                }
+            }
         }
+
+        parsing_table_dict[static_cast<int>(i)] = actions;
         table_rows.push_back(row);
     }
 
+    vector<string> header_for_print;
+    header_for_print.push_back("State");
+    for (char t : terminals) header_for_print.push_back(string(1, t));
+    for (char nt : nonterms) header_for_print.push_back(string(1, nt));
     cout << "\nParsing Table:\n\n";
-    cout << table_to_string(table_rows, header) << "\n";
+    cout << table_to_string(table_rows, header_for_print) << "\n";
 
-    unordered_map<int, Production> prod_by_index;
-    for (size_t i = 0; i < prods.size(); ++i) prod_by_index[(int)i] = prods[i];
+    cout << "\nEnter the string to be parsed: ";
+    string input_string;
+    cin >> ws;
+    getline(cin, input_string);
+    input_string += '$';
 
-    // Use prompt_line to force waiting for the user's input
-    string input_line = prompt_line("\nEnter the string to be parsed (tokens separated by spaces OR as contiguous characters): ");
-    string trimmed_in = trim(input_line);
-
-    vector<string> input_tokens;
-    if (trimmed_in.empty()) {
-        // nothing, just $
-    } else if (trimmed_in.find_first_of(" \t") != string::npos) {
-        input_tokens = split_ws(trimmed_in);
-    } else {
-        for (char c : trimmed_in) {
-            if (isspace((unsigned char)c)) continue;
-            input_tokens.emplace_back(1, c);
-        }
-    }
-    input_tokens.push_back("$");
-
-    bool accepted = false;
-    vector<vector<string>> trace;
-    vector<string> stack_symbols;
-    stack_symbols.push_back("0");
-
+    vector<string> stack;
+    stack.push_back("0");
     int pointer = 0;
+    vector<vector<string>> trace;
+    bool accepted = false;
+
     while (true) {
-        if (stack_symbols.empty()) break;
-        int state = stoi(stack_symbols.back());
-        string lookahead = (pointer < (int)input_tokens.size()) ? input_tokens[pointer] : "$";
-        string action = "";
-        if (ACTION.count(state) && ACTION[state].count(lookahead)) action = ACTION[state][lookahead];
-        else {
+        if (stack.empty()) break;
+        int state = stoi(stack.back());
+        char lookahead = pointer < (int)input_string.size() ? input_string[pointer] : '\0';
+
+        string action;
+        if (parsing_table_dict.count(state) && parsing_table_dict[state].count(lookahead)) {
+            action = parsing_table_dict[state][lookahead];
+        } else {
             break;
         }
 
         if (action == "Accept") {
-            trace.push_back({ "Action(" + to_string(state) + ", " + lookahead + ") = Accept",
-                              to_string(pointer), lookahead, join_stack(stack_symbols) });
+            trace.push_back({ "Action(" + to_string(state) + ", " + string(1, lookahead) + ") = Accept",
+                              to_string(pointer), string(1, lookahead), join_stack(stack) });
             accepted = true;
             break;
         } else if (!action.empty() && action[0] == 'S') {
             int nextState = stoi(action.substr(1));
-            trace.push_back({ "Action(" + to_string(state) + ", " + lookahead + ") = " + action,
-                              to_string(pointer), lookahead, join_stack(stack_symbols) });
-            stack_symbols.push_back(lookahead);
-            stack_symbols.push_back(to_string(nextState));
+            trace.push_back({ "Action(" + to_string(state) + ", " + string(1, lookahead) + ") = " + action,
+                              to_string(pointer), string(1, lookahead), join_stack(stack) });
+            string sym(1, lookahead);
+            stack.push_back(sym);
+            stack.push_back(to_string(nextState));
             pointer++;
         } else if (!action.empty() && action[0] == 'r') {
             int prodIndex = stoi(action.substr(1));
-            Production P = prod_by_index[prodIndex];
-            int popCount = 2 * (int)P.rhs.size();
-            for (int i = 0; i < popCount; ++i) {
-                if (!stack_symbols.empty()) stack_symbols.pop_back();
+            string prodToReduce;
+            for (const auto& kv : production_numbers) {
+                if (kv.second == prodIndex) { prodToReduce = kv.first; break; }
             }
-            stack_symbols.push_back(P.lhs);
-            if (stack_symbols.size() < 2) break;
-            int prevState = stoi(stack_symbols[stack_symbols.size() - 2]);
-            if (GOTO.count(prevState) && GOTO[prevState].count(P.lhs)) {
-                int gt = GOTO[prevState][P.lhs];
-                trace.push_back({ "Action(" + to_string(prevState) + ", " + P.lhs + ") = r" + to_string(prodIndex),
-                                  to_string(pointer), lookahead, join_stack(stack_symbols) });
-                stack_symbols.push_back(to_string(gt));
+            if (prodToReduce.empty()) break;
+            string rhs = prodToReduce.substr(prodToReduce.find("->") + 2);
+            int lengthToPop = 2 * static_cast<int>(rhs.size());
+            for (int k = 0; k < lengthToPop; ++k) {
+                if (!stack.empty()) stack.pop_back();
+            }
+            char lhs = prodToReduce[0];
+            stack.push_back(string(1, lhs));
+            int prevState = stoi(stack[stack.size() - 2]);
+            string gotoVal = "";
+            if (parsing_table_dict.count(prevState) && parsing_table_dict[prevState].count(lhs)) {
+                gotoVal = parsing_table_dict[prevState][lhs];
             } else {
                 break;
             }
+            trace.push_back({ "Action(" + to_string(prevState) + ", " + string(1, lhs) + ") = r" + to_string(prodIndex),
+                              to_string(pointer), string(1, lookahead), join_stack(stack) });
+            if (!gotoVal.empty()) {
+                stack.push_back(gotoVal);
+            } else break;
         } else {
             break;
         }
     }
 
+    /*A validação final verifica cada uma das etapas do processo e, em seguida, dá a palavra final sobre se o resultado é ou não parseável.*/
     if (accepted) {
         string content;
         vector<string> traceHeader = { "Process", "LookAhead", "Symbol", "Stack" };
         content += table_to_string(trace, traceHeader);
-        string compressed = compress_name(input_line);
+        string compressed = compress_name(input_string.substr(0, input_string.size() - 1));
         save_result_file(content, grammar_id, compressed);
-        cout << "The string \"" << input_line << "\" is parsable! Saved in parsable_strings/" << grammar_id << "/" << compressed << ".txt\n";
+        cout << "the string " << input_string.substr(0, input_string.size() - 1) << " is accepted (Aceita)! saved on parsable_strings/" << grammar_id << "/" << compressed << ".txt\n";
     } else {
-        cout << "The string \"" << input_line << "\" is not parsable!\n";
+        cout << "the string " << input_string.substr(0, input_string.size() - 1) << " are rected (Rejeitada)!\n";
     }
 
     return 0;
 }
+
+        
